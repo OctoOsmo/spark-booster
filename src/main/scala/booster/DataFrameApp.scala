@@ -1,9 +1,10 @@
 package booster
 
+import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.sql.expressions.{UserDefinedFunction, Window}
 import org.apache.spark.sql.functions.{col, row_number, udf}
 import org.apache.spark.sql.types._
-import org.apache.spark.sql.{SaveMode, SparkSession}
+import org.apache.spark.sql.{DataFrame, SaveMode, SparkSession}
 
 import scala.util.Try
 
@@ -69,7 +70,7 @@ object DataFrameApp {
 
     val geoipBlocks = spark.read.format("csv")
       .schema(blocksCsv)
-      .option("header", value = true)
+      .option("header", value = false)
       .load(geoipBlocksPath)
 
     val geoipLocation = spark.read.format("csv")
@@ -77,18 +78,18 @@ object DataFrameApp {
       .option("header", value = true)
       .load(geoipLocationPath)
 
-    val locations = geoipBlocks.join(geoipLocation, "locId")
+    val locations: Broadcast[DataFrame] = spark.sparkContext.broadcast(geoipBlocks.join(geoipLocation, "locId"))
 
     val yearlyRevenueWindow = Window.partitionBy("year")
       .orderBy(col("sum(revenue)").desc)
 
     userVisits.as("uv")
-      .join(locations.as("loc"), col("uv.ip").between(col("loc.startIpNum"), col("loc.endIpNum")))
+      .join(locations.value.as("loc"), col("uv.ip").between(col("loc.startIpNum"), col("loc.endIpNum")))
       .withColumn("date", sqlDateToYear(col("date")))
       .withColumnRenamed("date", "year")
       .filter(col("city").isNotNull)
       .withColumn("year", col("year").cast(IntegerType))
-      .filter(col("year") > 2010)
+//      .filter(col("year") > 2010)
       .select("year", "country", "city", "revenue")
       .groupBy("year", "country", "city")
       .sum("revenue")
