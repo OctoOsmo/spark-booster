@@ -3,7 +3,7 @@ package booster
 import org.apache.spark.sql.expressions.{UserDefinedFunction, Window}
 import org.apache.spark.sql.functions.{col, row_number, udf}
 import org.apache.spark.sql.types._
-import org.apache.spark.sql.{DataFrame, SaveMode, SparkSession}
+import org.apache.spark.sql.{SaveMode, SparkSession}
 
 import scala.util.Try
 
@@ -20,12 +20,14 @@ object DataFrameApp {
       StructField("search", StringType, nullable = true),
       StructField("duration", IntegerType, nullable = true)))
   }
+
   def blocksCsv: StructType = {
     StructType(Array(
       StructField("startIpNum", LongType, nullable = true),
       StructField("endIpNum", LongType, nullable = true),
       StructField("locId", IntegerType, nullable = true)))
   }
+
   def locationCsv: StructType = {
     StructType(Array(
       StructField("locId", IntegerType, nullable = true),
@@ -38,6 +40,7 @@ object DataFrameApp {
       StructField("l_metroCode", StringType, nullable = true),
       StructField("l_areaCode", StringType, nullable = true)))
   }
+
   val sqlIpv4ToLong: UserDefinedFunction = udf((ip: String) =>
     Try(ip.split('.').ensuring(_.length == 4)
       .map(_.toLong).ensuring(_.forall(x => x >= 0 && x < 256))
@@ -60,7 +63,7 @@ object DataFrameApp {
 
     val userVisits = spark.read.format("csv")
       .schema(userVisitsCsv)
-      .option("header", value = true)
+      .option("header", value = false)
       .load(uvPath)
       .withColumn("ip", sqlIpv4ToLong(col("ip")))
 
@@ -79,7 +82,7 @@ object DataFrameApp {
     val yearlyRevenueWindow = Window.partitionBy("year")
       .orderBy(col("sum(revenue)").desc)
 
-    val uvl: DataFrame = userVisits.as("uv")
+    userVisits.as("uv")
       .join(locations.as("loc"), col("uv.ip").between(col("loc.startIpNum"), col("loc.endIpNum")))
       .withColumn("date", sqlDateToYear(col("date")))
       .withColumnRenamed("date", "year")
@@ -93,16 +96,10 @@ object DataFrameApp {
       .orderBy(col("year"), col("rank"))
       .withColumnRenamed("sum(revenue)", "sum(adRevenue)")
       .withColumnRenamed("country", "countryCode")
-
-    //    uvl
-    //      .write
-    //      .mode(SaveMode.Overwrite)
-    //      .option("header", value = true)
-    //      .csv(outputPath + "/uvl")
-
-    val namedFrames = List((uvl, "/uvl"))
-    printFrames(namedFrames.map(_._1))
-    writeFrames(namedFrames, outputPath)
+      .write
+      .mode(SaveMode.Overwrite)
+      .option("header", value = true)
+      .csv(outputPath + "/uvl")
 
     spark.read
       .format("csv")
@@ -115,19 +112,4 @@ object DataFrameApp {
       .option("header", value = true)
       .csv(outputPath + "/merged")
   }
-
-  def writeFrames(dfTuplesList: List[(DataFrame, String)], outputPath: String): Unit =
-    dfTuplesList.foreach { df =>
-      df._1
-        .write
-        .mode(SaveMode.Overwrite)
-        .option("header", value = true)
-        .csv(outputPath + df._2)
-    }
-
-  def printFrames(dfList: List[DataFrame]): Unit =
-    dfList.foreach { df =>
-      df.show
-      df.printSchema
-    }
 }
